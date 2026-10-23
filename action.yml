@@ -1,0 +1,100 @@
+name: App Store Phased Release
+description: Check, pause, resume, complete or crash-guard the App Store phased release of an iOS app through the App Store Connect API
+author: Abhishek Bansal
+
+branding:
+  icon: sliders
+  color: blue
+
+inputs:
+  command:
+    description: One of status, pause, resume, complete, guard
+    required: false
+    default: status
+  issuer-id:
+    description: App Store Connect API issuer ID
+    required: true
+  key-id:
+    description: App Store Connect API key ID
+    required: true
+  private-key:
+    description: Contents of the App Store Connect API private key (.p8 file)
+    required: true
+  app-id:
+    description: Numeric Apple ID of the app; either app-id or bundle-id is required
+    required: false
+    default: ''
+  bundle-id:
+    description: Bundle identifier of the app, resolved to the Apple ID when app-id is empty
+    required: false
+    default: ''
+  version:
+    description: Version string to control; defaults to the newest live or pending iOS version that has a phased release
+    required: false
+    default: ''
+  crash-free-rate:
+    description: Current crash-free rate in percent from your crash reporter; required for command guard
+    required: false
+    default: ''
+  min-crash-free-rate:
+    description: Guard pauses the phased release when crash-free-rate is below this percentage
+    required: false
+    default: '99.5'
+  dry-run:
+    description: Compute and report only, never change the phased release
+    required: false
+    default: 'false'
+  github-token:
+    description: Token used to record deployment history; needs deployments write
+    required: false
+    default: ${{ github.token }}
+  deployment-environment:
+    description: GitHub environment that deployment history is recorded under
+    required: false
+    default: appstore-phased-release
+  require-history:
+    description: Fail the run when deployment history cannot be recorded
+    required: false
+    default: 'false'
+  slack-webhook-url:
+    description: Slack incoming webhook URL for notifications
+    required: false
+    default: ''
+  notify-on-healthy:
+    description: Send a Slack message when guard finds the release healthy
+    required: false
+    default: 'false'
+  notify-on-skip:
+    description: Send a Slack message when a command is skipped
+    required: false
+    default: 'false'
+  api-base-url:
+    description: Testing only. Base URL of the App Store Connect API
+    required: false
+    default: https://api.appstoreconnect.apple.com
+  github-api-url:
+    description: Testing only. Base URL of the GitHub REST API
+    required: false
+    default: ''
+
+outputs:
+  app-id:
+    description: Numeric Apple ID of the app
+  version:
+    description: Version string whose phased release was inspected
+  state:
+    description: Phased release state after the run (INACTIVE, ACTIVE, PAUSED, COMPLETE or NONE)
+  day:
+    description: Current day of the phased release (1-7)
+  percentage:
+    description: Share of users receiving automatic updates, derived from the day
+  previous-state:
+    description: Phased release state before the run
+  action-taken:
+    description: paused, resumed, completed, skipped or none
+  reason:
+    description: Why the action was taken, skipped or failed
+
+runs:
+  using: node24
+  main: src/index.js

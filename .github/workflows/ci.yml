@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color .github/workflows/*.yml examples/*.yml
+
+      - name: Syntax check sources
+        run: |
+          for file in src/*.js tests/*.js; do
+            node --check "$file"
+          done
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Run tests
+        run: node --test tests/*.test.js
+
+  integration:
+    name: Integration (dry run against mock App Store Connect)
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    env:
+      MOCK_PORT: 8787
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Generate throwaway API key
+        id: key
+        run: |
+          node -e "
+            const { generateKeyPairSync } = require('node:crypto');
+            const fs = require('node:fs');
+            const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+            fs.writeFileSync(process.env.RUNNER_TEMP + '/AuthKey_TEST.p8', privateKey.export({ type: 'pkcs8', format: 'pem' }));
+            fs.writeFileSync(process.env.RUNNER_TEMP + '/AuthKey_TEST.pub', publicKey.export({ type: 'spki', format: 'pem' }));
+          "
+          delimiter="EOF_$(openssl rand -hex 8)"
+          {
+            echo "private-key<<$delimiter"
+            cat "$RUNNER_TEMP/AuthKey_TEST.p8"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Start mock App Store Connect server
+        env:
+          MOCK_PUBLIC_KEY_FILE: ${{ runner.temp }}/AuthKey_TEST.pub
+        run: |
+          nohup node tests/mock-server.js > "$RUNNER_TEMP/mock-server.log" 2>&1 &
+          for _ in $(seq 1 50); do
+            curl -sf "http://127.0.0.1:$MOCK_PORT/__stats" > /dev/null && exit 0
+            sleep 0.2
+          done
+          cat "$RUNNER_TEMP/mock-server.log"
+          exit 1
+
+      - name: Pause (dry run, bundle id)
+        id: pause
+        uses: ./
+        with:
+          command: pause
+          dry-run: true
+          issuer-id: 00000000-0000-0000-0000-000000000000
+          key-id: TESTKEY123
+          private-key: ${{ steps.key.outputs.private-key }}
+          bundle-id: com.example.app
+          api-base-url: http://127.0.0.1:${{ env.MOCK_PORT }}
+
+      - name: Guard below threshold (dry run, app id)
+        id: guard
+        uses: ./
+        with:
+          command: guard
+          dry-run: true
+          issuer-id: 00000000-0000-0000-0000-000000000000
+          key-id: TESTKEY123
+          private-key: ${{ steps.key.outputs.private-key }}
+          app-id: '123456789'
+          crash-free-rate: '98.2'
+          min-crash-free-rate: '99.5'
+          api-base-url: http://127.0.0.1:${{ env.MOCK_PORT }}
+
+      - name: Verify outputs and that nothing was changed
+        env:
+          PAUSE_APP_ID: ${{ steps.pause.outputs.app-id }}
+          PAUSE_VERSION: ${{ steps.pause.outputs.version }}
+          PAUSE_STATE: ${{ steps.pause.outputs.state }}
+          PAUSE_DAY: ${{ steps.pause.outputs.day }}
+          PAUSE_PERCENTAGE: ${{ steps.pause.outputs.percentage }}
+          PAUSE_PREVIOUS: ${{ steps.pause.outputs.previous-state }}
+          PAUSE_ACTION: ${{ steps.pause.outputs.action-taken }}
+          PAUSE_REASON: ${{ steps.pause.outputs.reason }}
+          GUARD_ACTION: ${{ steps.guard.outputs.action-taken }}
+          GUARD_REASON: ${{ steps.guard.outputs.reason }}
+        run: |
+          fail() { echo "::error::$1"; cat "$RUNNER_TEMP/mock-server.log"; exit 1; }
+          [[ $PAUSE_APP_ID == 123456789 ]] || fail "unexpected app-id '$PAUSE_APP_ID'"
+          [[ $PAUSE_VERSION == 2.3.0 ]] || fail "unexpected version '$PAUSE_VERSION'"
+          [[ $PAUSE_STATE == ACTIVE ]] || fail "unexpected state '$PAUSE_STATE'"
+          [[ $PAUSE_PREVIOUS == ACTIVE ]] || fail "unexpected previous-state '$PAUSE_PREVIOUS'"
+          [[ $PAUSE_DAY == 3 ]] || fail "unexpected day '$PAUSE_DAY'"
+          [[ $PAUSE_PERCENTAGE == 5 ]] || fail "unexpected percentage '$PAUSE_PERCENTAGE'"
+          [[ $PAUSE_ACTION == none ]] || fail "unexpected action-taken '$PAUSE_ACTION'"
+          [[ $PAUSE_REASON == "Dry run: would pause"* ]] || fail "unexpected reason '$PAUSE_REASON'"
+          [[ $GUARD_ACTION == none ]] || fail "unexpected guard action-taken '$GUARD_ACTION'"
+          [[ $GUARD_REASON == *"Unhealthy: crash-free rate 98.2% < minimum 99.5%"* ]] || fail "unexpected guard reason '$GUARD_REASON'"
+          stats=$(curl -sf "http://127.0.0.1:$MOCK_PORT/__stats")
+          echo "Mock server stats: $stats"
+          [[ $(jq -r .patches <<< "$stats") == 0 ]] || fail "dry run sent a PATCH"
+          [[ $(jq -r .authFailures <<< "$stats") == 0 ]] || fail "mock server rejected a token"

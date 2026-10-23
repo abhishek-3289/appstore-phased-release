@@ -1,0 +1,43 @@
+name: App Store phased release crash guard
+
+on:
+  schedule:
+    - cron: '0 8-20/2 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: appstore-phased-release
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    if: vars.PHASED_RELEASE_GUARD_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: appstore-phased-release
+    steps:
+      - name: Read crash-free rate
+        id: crashes
+        env:
+          CRASH_FREE_RATE: ${{ vars.CRASH_FREE_RATE }}
+        run: |
+          if [[ -z $CRASH_FREE_RATE ]]; then
+            echo "::error::Replace this step with a query to your crash reporter that prints the crash-free users percentage"
+            exit 1
+          fi
+          echo "crash-free-rate=$CRASH_FREE_RATE" >> "$GITHUB_OUTPUT"
+
+      - name: Pause phased release when unhealthy
+        uses: abhishek-3289/appstore-phased-release@v1
+        with:
+          command: guard
+          crash-free-rate: ${{ steps.crashes.outputs.crash-free-rate }}
+          min-crash-free-rate: '99.5'
+          issuer-id: ${{ secrets.ASC_ISSUER_ID }}
+          key-id: ${{ secrets.ASC_KEY_ID }}
+          private-key: ${{ secrets.ASC_PRIVATE_KEY }}
+          bundle-id: com.example.app
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}

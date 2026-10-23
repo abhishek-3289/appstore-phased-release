@@ -1,0 +1,56 @@
+name: App Store phased release
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: What to do with the phased release
+        type: choice
+        options: [status, pause, resume, complete]
+        default: status
+      version:
+        description: Version string, empty for the newest live or pending version
+        type: string
+        required: false
+      dry-run:
+        description: Only report what would happen
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: appstore-phased-release
+  cancel-in-progress: false
+
+jobs:
+  phased-release:
+    runs-on: ubuntu-latest
+    environment: appstore-phased-release
+    steps:
+      - name: Control phased release
+        id: phased
+        uses: abhishek-3289/appstore-phased-release@v1
+        with:
+          command: ${{ inputs.command }}
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry-run }}
+          issuer-id: ${{ secrets.ASC_ISSUER_ID }}
+          key-id: ${{ secrets.ASC_KEY_ID }}
+          private-key: ${{ secrets.ASC_PRIVATE_KEY }}
+          bundle-id: com.example.app
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          notify-on-skip: true
+
+      - name: Print result
+        env:
+          VERSION: ${{ steps.phased.outputs.version }}
+          STATE: ${{ steps.phased.outputs.state }}
+          DAY: ${{ steps.phased.outputs.day }}
+          PERCENTAGE: ${{ steps.phased.outputs.percentage }}
+          ACTION: ${{ steps.phased.outputs.action-taken }}
+          REASON: ${{ steps.phased.outputs.reason }}
+        run: |
+          echo "$VERSION is $STATE on day $DAY ($PERCENTAGE%), action: $ACTION ($REASON)"
