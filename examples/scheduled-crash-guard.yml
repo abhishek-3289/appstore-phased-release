@@ -31,7 +31,7 @@ jobs:
           echo "crash-free-rate=$CRASH_FREE_RATE" >> "$GITHUB_OUTPUT"
 
       - name: Pause phased release when unhealthy
-        uses: abhishek-3289/appstore-phased-release@v1
+        uses: appshipkit/appstore-phased-release@v1
         with:
           command: guard
           crash-free-rate: ${{ steps.crashes.outputs.crash-free-rate }}

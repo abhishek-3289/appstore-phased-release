@@ -14,7 +14,7 @@
     steps:
       - name: Pause phased release
         id: phased
-        uses: abhishek-3289/appstore-phased-release@v1
+        uses: appshipkit/appstore-phased-release@v1
         with:
           command: pause
           issuer-id: ${{ secrets.ASC_ISSUER_ID }}
